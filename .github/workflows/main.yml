@@ -1,14 +1,19 @@
-name: "Browser RDP v61 (Auto-Open Fix)"
+name: "Browser RDP v63 (Chrome Edition)"
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 */6 * * *'
 
+# 🛑 HIGHLANDER RULE: Only 1 active instance
+concurrency:
+  group: "browser-rdp-session"
+  cancel-in-progress: true
+
 jobs:
   browser-desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360 # 6 Hours Max
 
     steps:
       - name: 🔔 Notify Start
@@ -16,17 +21,41 @@ jobs:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_ID -d text="🌐 <b>Starting Browser RDP v61...</b>%0APlease wait 3 mins." -d parse_mode="HTML"
+          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_ID -d text="🌏 <b>Starting RDP v63 (Chrome Mode)...</b>%0APlease wait 3 mins." -d parse_mode="HTML"
 
-      # 1. Install Desktop
-      - name: 💻 Install Desktop Environment
+      # 1. OPTIMIZATION
+      - name: ⚡ Tune System
+        run: |
+          # 4GB Swap for Chrome Tabs
+          sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+          sudo sysctl -w net.core.default_qdisc=fq && sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+          
+          # 🇮🇳 Timezone: Kolkata
+          sudo timedatectl set-timezone Asia/Kolkata
+          echo "✅ System Tuned (IST)"
+
+      # 2. INSTALL DESKTOP & CHROME
+      - name: 💻 Install Desktop & Chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-numpy dbus-x11 xorg x11-xserver-utils
+          
+          # Install Desktop Environment
+          sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-numpy dbus-x11 xorg x11-xserver-utils pulseaudio pavucontrol
+          
+          # Install Themes & Utilities
+          sudo apt-get install -y arc-theme papirus-icon-theme autocutsel
+          
+          # 🗑️ Remove Firefox (Just in case)
+          sudo apt-get remove -y firefox || true
+          
+          # 🌐 Install Google Chrome
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || sudo apt-get -f install -y
+          
           sudo apt-get clean
-          echo "✅ Desktop Installed"
+          echo "✅ Chrome & Desktop Installed"
 
-      # 2. Setup VNC (Zombie Mode)
+      # 3. SETUP VNC & DARK MODE
       - name: 🔐 Setup VNC
         run: |
           mkdir -p ~/.vnc
@@ -37,6 +66,19 @@ jobs:
           #!/bin/bash
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
+          
+          # Start Clipboard Sync
+          autocutsel -fork
+          
+          # Force Dark Theme (Arc-Dark)
+          (
+            sleep 5
+            xfconf-query -c xsettings -p /Net/ThemeName -s 'Arc-Dark' --create -t string
+            xfconf-query -c xfwm4 -p /general/theme -s 'Arc-Dark' --create -t string
+            xfconf-query -c xsettings -p /Net/IconThemeName -s 'Papirus-Dark' --create -t string
+          ) &
+          
+          # Start Desktop (Zombie Mode - Never Crash)
           dbus-launch --exit-with-session xfce4-session &
           sleep 2
           tail -f /dev/null
@@ -44,23 +86,19 @@ jobs:
           
           chmod +x ~/.vnc/xstartup
           vncserver :1 -geometry 1280x720 -depth 24
-          echo "✅ VNC Server Started"
+          echo "✅ VNC Started"
 
-      # 3. Setup noVNC (Auto-Index Fix)
+      # 4. SETUP noVNC
       - name: 🌐 Setup noVNC
         run: |
           git clone https://github.com/novnc/noVNC.git
           git clone https://github.com/novnc/websockify noVNC/utils/websockify
-          
-          # 🛑 FIX: Link vnc.html to index.html so it opens automatically
           ln -s vnc.html noVNC/index.html
-          
           ./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
           sleep 5
-          echo "✅ noVNC Started"
 
-      # 4. Cloudflare Tunnel
-      - name: 🚀 Cloudflare Tunnel & Telegram
+      # 5. CLOUDFLARE TUNNEL
+      - name: 🚀 Cloudflare Tunnel & Notify
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -72,31 +110,31 @@ jobs:
           
           echo "⏳ Waiting for URL..."
           sleep 10
-          
           URL=$(grep -o 'https://.*\.trycloudflare.com' tunnel.log | head -n 1)
-          
           if [ -z "$URL" ]; then URL="Error: Check Logs"; fi
           
-          echo "🔗 Web URL: $URL"
+          echo "🔗 URL: $URL"
           
           curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
           -d chat_id=$TG_ID \
-          -d text="✅ <b>Browser RDP Ready!</b>%0A%0A🔗 <b>Link:</b> $URL%0A🔑 <b>Password:</b> <code>123456</code>%0A%0A<i>Link opens Desktop directly!</i>" \
+          -d text="✅ <b>RDP v63 Ready!</b>%0A%0A🔗 <b>Link:</b> $URL%0A🔑 <b>Pass:</b> <code>123456</code>%0A🌐 <b>Browser:</b> Google Chrome%0A🌑 <b>Theme:</b> Dark Mode" \
           -d parse_mode="HTML"
 
-      # 5. Keep Alive
-      - name: 🔄 Keep Alive & Auto-Trigger
+      # 6. HIGHLANDER LOOP (5h 57m)
+      - name: 🔄 Highlander Logic
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           START=$(date +%s)
+          # 21420 seconds = 5h 57m
           while true; do
             NOW=$(date +%s)
             DIFF=$((NOW - START))
-            if [ $DIFF -ge 21000 ]; then
-               echo "🔫 Triggering Next RDP..."
+            if [ $DIFF -ge 21420 ]; then
+               echo "🔫 Triggering Next Runner..."
                gh workflow run main.yml
-               sleep 300
+               echo "💀 Dying..."
+               sleep 60
                exit 0
             fi
             sleep 60
