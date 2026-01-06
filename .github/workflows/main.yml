@@ -1,0 +1,94 @@
+name: "Browser RDP (Cloudflare + No App)"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *' # Auto-Run every 6 hours
+
+jobs:
+  browser-desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 Hours Max
+
+    steps:
+      - name: 🔔 Notify Start
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_ID -d text="🌐 <b>Starting Browser RDP...</b>%0APlease wait 3 mins." -d parse_mode="HTML"
+
+      # 1. Install Desktop (XFCE) & VNC Server
+      - name: 💻 Install Desktop Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-numpy
+          sudo apt-get clean
+          echo "✅ Desktop Installed"
+
+      # 2. Setup VNC Password & Start Server
+      - name: 🔐 Setup VNC
+        run: |
+          mkdir -p ~/.vnc
+          echo "123456" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          
+          cat <<EOF > ~/.vnc/xstartup
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          startxfce4 &
+          EOF
+          chmod +x ~/.vnc/xstartup
+          
+          vncserver :1 -geometry 1280x720 -depth 24
+          echo "✅ VNC Server Started"
+
+      # 3. Install noVNC (The Web Interface)
+      - name: 🌐 Setup noVNC (Web Bridge)
+        run: |
+          git clone https://github.com/novnc/noVNC.git
+          git clone https://github.com/novnc/websockify noVNC/utils/websockify
+          openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 -subj "/C=IN/ST=Del/L=Del/O=RDP/CN=localhost" -keyout noVNC/utils/self.pem -out noVNC/utils/self.pem
+          ./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 --ssl-only &
+          echo "✅ noVNC Web Server Started"
+
+      # 4. Start Cloudflare Tunnel & Notify
+      - name: 🚀 Cloudflare Tunnel & Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          nohup cloudflared tunnel --url https://localhost:6080 --no-autoupdate > tunnel.log 2>&1 &
+          
+          echo "⏳ Waiting for URL..."
+          sleep 10
+          URL=$(grep -o 'https://.*\.trycloudflare.com' tunnel.log | head -n 1)
+          if [ -z "$URL" ]; then URL="Error: Could not fetch URL. Check Logs."; fi
+          
+          echo "🔗 Web URL: $URL"
+          
+          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
+          -d chat_id=$TG_ID \
+          -d text="✅ <b>Browser RDP Ready!</b>%0A%0A🔗 <b>Link:</b> $URL%0A🔑 <b>Password:</b> <code>123456</code>%0A%0A<i>Click link -> Connect -> Enter Password</i>" \
+          -d parse_mode="HTML"
+
+      # 5. Keep Alive Loop (Auto-Restart Logic)
+      - name: 🔄 Keep Alive & Auto-Trigger
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          START=$(date +%s)
+          while true; do
+            NOW=$(date +%s)
+            DIFF=$((NOW - START))
+            if [ $DIFF -ge 21000 ]; then
+               echo "🔫 Triggering Next RDP..."
+               gh workflow run main.yml
+               sleep 300
+               exit 0
+            fi
+            sleep 60
+          done
