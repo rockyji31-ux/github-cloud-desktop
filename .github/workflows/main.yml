@@ -1,4 +1,4 @@
-name: "Browser RDP v60 (Zombie Mode: Never Crash)"
+name: "Browser RDP v61 (Auto-Open Fix)"
 
 on:
   workflow_dispatch:
@@ -16,59 +16,48 @@ jobs:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_ID -d text="🌐 <b>Starting Browser RDP v60...</b>%0APlease wait 3 mins." -d parse_mode="HTML"
+          curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_ID -d text="🌐 <b>Starting Browser RDP v61...</b>%0APlease wait 3 mins." -d parse_mode="HTML"
 
-      # 1. Install Desktop & Essential X11 Utils
+      # 1. Install Desktop
       - name: 💻 Install Desktop Environment
         run: |
           sudo apt-get update
-          # Added 'xorg' and 'x11-xserver-utils' for stability
           sudo apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-numpy dbus-x11 xorg x11-xserver-utils
           sudo apt-get clean
           echo "✅ Desktop Installed"
 
-      # 2. Setup VNC (The Zombie Fix) 🧟
+      # 2. Setup VNC (Zombie Mode)
       - name: 🔐 Setup VNC
         run: |
           mkdir -p ~/.vnc
           echo "123456" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # 🛑 TRAP LOGIC: This script will NEVER exit "too early"
           cat <<EOF > ~/.vnc/xstartup
           #!/bin/bash
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
-          
-          # 1. Start XFCE in background
           dbus-launch --exit-with-session xfce4-session &
-          PID=\$!
-          
-          # 2. Wait a bit
           sleep 2
-          
-          # 3. The "Zombie" lock: If XFCE dies, this keeps VNC alive
-          # This prevents "cleanly exited too early" error 100%
           tail -f /dev/null
           EOF
           
           chmod +x ~/.vnc/xstartup
-          
-          # Start VNC Server
           vncserver :1 -geometry 1280x720 -depth 24
           echo "✅ VNC Server Started"
 
-      # 3. Setup noVNC (HTTP Mode - No SSL mismatch)
+      # 3. Setup noVNC (Auto-Index Fix)
       - name: 🌐 Setup noVNC
         run: |
           git clone https://github.com/novnc/noVNC.git
           git clone https://github.com/novnc/websockify noVNC/utils/websockify
           
-          # Listen on HTTP 6080 (Cloudflare handles SSL)
-          ./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+          # 🛑 FIX: Link vnc.html to index.html so it opens automatically
+          ln -s vnc.html noVNC/index.html
           
+          ./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
           sleep 5
-          echo "✅ noVNC Web Server Started"
+          echo "✅ noVNC Started"
 
       # 4. Cloudflare Tunnel
       - name: 🚀 Cloudflare Tunnel & Telegram
@@ -79,29 +68,23 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           
-          # Pointing to HTTP (Fixes 502 Bad Gateway)
           nohup cloudflared tunnel --url http://localhost:6080 --no-autoupdate > tunnel.log 2>&1 &
           
           echo "⏳ Waiting for URL..."
           sleep 10
           
-          # Grep URL
           URL=$(grep -o 'https://.*\.trycloudflare.com' tunnel.log | head -n 1)
           
-          if [ -z "$URL" ]; then 
-             URL="Error: Check GitHub Logs"
-             # Debug: Print log if failed
-             cat tunnel.log
-          fi
+          if [ -z "$URL" ]; then URL="Error: Check Logs"; fi
           
           echo "🔗 Web URL: $URL"
           
           curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \
           -d chat_id=$TG_ID \
-          -d text="✅ <b>Browser RDP v60 Ready!</b>%0A%0A🔗 <b>Link:</b> $URL%0A🔑 <b>Password:</b> <code>123456</code>%0A%0A<i>Click link -> Connect -> Enter Password</i>" \
+          -d text="✅ <b>Browser RDP Ready!</b>%0A%0A🔗 <b>Link:</b> $URL%0A🔑 <b>Password:</b> <code>123456</code>%0A%0A<i>Link opens Desktop directly!</i>" \
           -d parse_mode="HTML"
 
-      # 5. Keep Alive Loop
+      # 5. Keep Alive
       - name: 🔄 Keep Alive & Auto-Trigger
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
